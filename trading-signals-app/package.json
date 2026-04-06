@@ -1,17 +1,16 @@
 {
   "name": "trading-signals-app",
-  "version": "1.0.0",
-  "description": "TradingView signals PWA za iPhone",
+  "version": "2.0.0",
+  "description": "Binance trading signals PWA za iPhone",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "generate-keys": "node -e \"const wp=require('web-push'); const k=wp.generateVAPIDKeys(); console.log('VAPID_PUBLIC=' + k.publicKey); console.log('VAPID_PRIVATE=' + k.privateKey);\""
+    "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "ws": "^8.16.0"
   },
   "engines": {
     "node": ">=16.0.0"

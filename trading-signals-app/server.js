@@ -1,257 +1,308 @@
 /**
- * Trading Signals - Node.js Backend
- * ===================================
- * Sprejema TradingView webhooks in pošilja
- * push notifikacije na iPhone (PWA).
+ * Trading Signals — Binance WebSocket + EMA/RSI Strategija
+ * ==========================================================
+ * Avtomatsko generira BUY/SELL signale iz Binance tržnih podatkov.
+ * Brez TradingView, brez plačila — samo Binance javni API.
  *
- * Namestitev:
- *   npm install
- *   node server.js
- *
- * Deploy na Railway.app (brezplačno):
- *   1. Ustvari račun na railway.app
- *   2. New Project → Deploy from GitHub
- *   3. Nastavi environment variable PORT=3000
+ * Strategija: EMA 9/21 crossover + RSI 14
+ *   BUY:  EMA9 prečka EMA21 navzgor  +  RSI < 70
+ *   SELL: EMA9 prečka EMA21 navzdol  +  RSI > 30
  */
 
 const express = require('express');
 const webpush = require('web-push');
 const cors = require('cors');
+const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ─── VAPID KLJUČI (za push notifikacije) ─────────────────
-// ENKRAT generiraj in shrani v .env:
-//   node -e "const wp=require('web-push'); const k=wp.generateVAPIDKeys(); console.log(JSON.stringify(k))"
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'ZAMENJAJ_S_TVOJIM_PUBLIC_KLUCEM';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'ZAMENJAJ_S_TVOJIM_PRIVATE_KLUCEM';
-const VAPID_EMAIL = process.env.VAPID_EMAIL || 'mailto:tvoj@email.com';
+// ─── KONFIGURACIJA ────────────────────────────────────────
+const SYMBOL    = (process.env.SYMBOL || 'BTCUSDT').toUpperCase();
+const INTERVAL  = process.env.INTERVAL || '1h';    // 1m, 5m, 15m, 1h, 4h, 1d
+const EMA_FAST  = parseInt(process.env.EMA_FAST || '9');
+const EMA_SLOW  = parseInt(process.env.EMA_SLOW || '21');
+const RSI_PERIOD = parseInt(process.env.RSI_PERIOD || '14');
+
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC  || 'ZAMENJAJ';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'ZAMENJAJ';
+const VAPID_EMAIL   = process.env.VAPID_EMAIL   || 'mailto:timotejstanic5@gmail.com';
 // ──────────────────────────────────────────────────────────
 
-// Nastavi web-push
-if (VAPID_PUBLIC !== 'ZAMENJAJ_S_TVOJIM_PUBLIC_KLUCEM') {
+if (VAPID_PUBLIC !== 'ZAMENJAJ') {
   webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC, VAPID_PRIVATE);
 }
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// ─── SHRAMBA ─────────────────────────────────────────────
+// ─── BAZA ─────────────────────────────────────────────────
 const DB_FILE = path.join(__dirname, 'db.json');
 let db = { signals: [], subscriptions: [] };
 
 function loadDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    }
-  } catch(e) { console.log('DB error:', e.message); }
+  try { if (fs.existsSync(DB_FILE)) db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
+  catch(e) {}
 }
-
 function saveDB() {
   try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
-  catch(e) { console.log('Save error:', e.message); }
+  catch(e) {}
+}
+loadDB();
+
+// ─── INDIKATORJI ──────────────────────────────────────────
+let candles = [];          // zgodovina svečnikov
+let prevEmaFast = null;
+let prevEmaSlow = null;
+let lastSignalType = null; // prepreči dvojne signale
+
+function calcEMA(price, prevEma, period) {
+  const k = 2 / (period + 1);
+  if (prevEma === null) return price;
+  return price * k + prevEma * (1 - k);
 }
 
-loadDB();
-// ──────────────────────────────────────────────────────────
+function calcRSI(closes, period) {
+  if (closes.length < period + 1) return 50;
+  const changes = closes.slice(-period - 1).map((c, i, a) => i === 0 ? 0 : c - a[i-1]).slice(1);
+  const gains = changes.filter(c => c > 0);
+  const losses = changes.filter(c => c < 0).map(Math.abs);
+  const avgGain = gains.reduce((a, b) => a + b, 0) / period;
+  const avgLoss = losses.reduce((a, b) => a + b, 0) / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Math.round(100 - (100 / (1 + rs)));
+}
+
+function calcTP(price, action, atr) {
+  const mult = 2.0;
+  return action === 'BUY'
+    ? Math.round((price + atr * mult) * 100) / 100
+    : Math.round((price - atr * mult) * 100) / 100;
+}
+
+function calcSL(price, action, atr) {
+  const mult = 1.2;
+  return action === 'BUY'
+    ? Math.round((price - atr * mult) * 100) / 100
+    : Math.round((price + atr * mult) * 100) / 100;
+}
+
+function calcATR(candles, period = 14) {
+  if (candles.length < period + 1) return candles[candles.length - 1]?.close * 0.01 || 100;
+  const trs = candles.slice(-period - 1).map((c, i, a) => {
+    if (i === 0) return c.high - c.low;
+    return Math.max(c.high - c.low, Math.abs(c.high - a[i-1].close), Math.abs(c.low - a[i-1].close));
+  });
+  return trs.slice(1).reduce((a, b) => a + b, 0) / period;
+}
+
+function processCandle(candle) {
+  candles.push(candle);
+  if (candles.length > 100) candles.shift();
+
+  const closes = candles.map(c => c.close);
+  const price = candle.close;
+
+  const emaFast = calcEMA(price, prevEmaFast, EMA_FAST);
+  const emaSlow = calcEMA(price, prevEmaSlow, EMA_SLOW);
+  const rsi = calcRSI(closes, RSI_PERIOD);
+
+  let signal = null;
+
+  // BUY: EMA9 prečka EMA21 navzgor + RSI ni pregret
+  if (prevEmaFast !== null && prevEmaSlow !== null) {
+    const crossUp   = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
+    const crossDown = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
+
+    if (crossUp && rsi < 70 && lastSignalType !== 'BUY') {
+      signal = 'BUY';
+      lastSignalType = 'BUY';
+    } else if (crossDown && rsi > 30 && lastSignalType !== 'SELL') {
+      signal = 'SELL';
+      lastSignalType = 'SELL';
+    }
+  }
+
+  prevEmaFast = emaFast;
+  prevEmaSlow = emaSlow;
+
+  if (signal) {
+    const atr = calcATR(candles);
+    const confidence = Math.min(95, Math.max(65,
+      signal === 'BUY' ? 100 - rsi : rsi
+    ));
+
+    const newSignal = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      action: signal,
+      symbol: SYMBOL.replace('USDT', '/USDT'),
+      price: price,
+      tp: calcTP(price, signal, atr),
+      sl: calcSL(price, signal, atr),
+      timeframe: INTERVAL,
+      confidence: confidence,
+      rsi: rsi,
+      emaFast: Math.round(emaFast * 100) / 100,
+      emaSlow: Math.round(emaSlow * 100) / 100,
+      strategy: `EMA${EMA_FAST}/${EMA_SLOW} + RSI${RSI_PERIOD}`
+    };
+
+    db.signals.unshift(newSignal);
+    if (db.signals.length > 500) db.signals = db.signals.slice(0, 500);
+    saveDB();
+
+    console.log(`🚨 SIGNAL: ${signal} ${SYMBOL} @ $${price} | RSI: ${rsi} | Confidence: ${confidence}%`);
+    sendPushToAll(newSignal);
+  }
+
+  // Log vsakih 10 svečnikov
+  if (candles.length % 10 === 0) {
+    console.log(`📊 ${SYMBOL} | Cena: $${price} | EMA${EMA_FAST}: ${Math.round(emaFast)} | EMA${EMA_SLOW}: ${Math.round(emaSlow)} | RSI: ${rsi}`);
+  }
+}
+
+// ─── BINANCE WEBSOCKET ────────────────────────────────────
+function connectBinance() {
+  const wsUrl = `wss://stream.binance.com:9443/ws/${SYMBOL.toLowerCase()}@kline_${INTERVAL}`;
+  console.log(`🔌 Povezujem na Binance: ${wsUrl}`);
+
+  const ws = new WebSocket(wsUrl);
+
+  ws.on('open', () => {
+    console.log(`✅ Povezan na Binance WebSocket (${SYMBOL} ${INTERVAL})`);
+  });
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data);
+      const k = msg.k;
+
+      if (!k) return;
+
+      const candle = {
+        time:   k.t,
+        open:   parseFloat(k.o),
+        high:   parseFloat(k.h),
+        low:    parseFloat(k.l),
+        close:  parseFloat(k.c),
+        volume: parseFloat(k.v),
+        closed: k.x  // true = zaprta svečka
+      };
+
+      // Procesiraj samo zaprte svečnike (za signale)
+      if (candle.closed) {
+        processCandle(candle);
+      }
+
+      // Posodobi zadnjo ceno v realnem času
+      currentPrice = candle.close;
+
+    } catch(e) {
+      console.log('WS parse error:', e.message);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('⚠️ Binance WS zaprt, reconnect čez 5s...');
+    setTimeout(connectBinance, 5000);
+  });
+
+  ws.on('error', (err) => {
+    console.log('WS napaka:', err.message);
+  });
+}
+
+let currentPrice = 0;
+connectBinance();
 
 // ─── API ENDPOINTS ────────────────────────────────────────
 
-// Pridobi zadnje signale (polling)
 app.get('/api/signals', (req, res) => {
   const since = parseInt(req.query.since) || 0;
   const newSignals = db.signals.filter(s => s.id > since);
-  res.json({ signals: newSignals, total: db.signals.length });
+  res.json({ signals: newSignals, total: db.signals.length, currentPrice });
 });
 
-// Shrani push subscription (iz brskalnika)
 app.post('/api/subscribe', (req, res) => {
   const subscription = req.body;
+  if (!subscription?.endpoint) return res.status(400).json({ error: 'Manjka subscription' });
 
-  if (!subscription || !subscription.endpoint) {
-    return res.status(400).json({ error: 'Manjka subscription' });
-  }
-
-  // Preveri ali že obstaja
   const exists = db.subscriptions.find(s => s.endpoint === subscription.endpoint);
   if (!exists) {
     db.subscriptions.push(subscription);
     saveDB();
-    console.log(`✅ Nova subscription (skupaj: ${db.subscriptions.length})`);
+    console.log(`✅ Nova push subscription (skupaj: ${db.subscriptions.length})`);
   }
-
-  res.json({ success: true, count: db.subscriptions.length });
+  res.json({ success: true });
 });
 
-// TradingView Webhook - GLAVNA TOČKA
-// Format sporočila v TradingView (prilagodi po potrebi):
-// {
-//   "action": "{{strategy.order.action}}",
-//   "symbol": "{{ticker}}",
-//   "price": {{close}},
-//   "tp": {{strategy.order.price}},
-//   "sl": 0,
-//   "timeframe": "{{interval}}",
-//   "confidence": 80
-// }
-app.post('/webhook', async (req, res) => {
-  console.log('📨 Webhook prejet:', JSON.stringify(req.body));
-
-  let signal;
-
-  // Podpri različne formate
-  if (typeof req.body === 'string') {
-    try { signal = JSON.parse(req.body); }
-    catch { signal = parseTextSignal(req.body); }
-  } else {
-    signal = req.body;
-  }
-
-  // Normalizacija
-  const normalizedSignal = {
-    id: Date.now(),
-    timestamp: new Date().toISOString(),
-    action: (signal.action || signal.side || signal.type || 'BUY').toUpperCase(),
-    symbol: signal.symbol || signal.ticker || signal.pair || 'BTC/USDT',
-    price: parseFloat(signal.price || signal.close || signal.entry || 0),
-    tp: parseFloat(signal.tp || signal.takeProfit || signal.take_profit || 0),
-    sl: parseFloat(signal.sl || signal.stopLoss || signal.stop_loss || 0),
-    timeframe: signal.timeframe || signal.interval || '1H',
-    confidence: parseInt(signal.confidence || 78),
-    strategy: signal.strategy || 'TradingView'
-  };
-
-  // Shrani
-  db.signals.unshift(normalizedSignal);
-  if (db.signals.length > 500) db.signals = db.signals.slice(0, 500);
-  saveDB();
-
-  // Pošlji push notifikacije vsem naročnikom
-  const results = await sendPushToAll(normalizedSignal);
-  console.log(`✅ Signal shranjen, poslano: ${results.sent}/${results.total} notifikacij`);
-
-  res.json({ success: true, signal: normalizedSignal, pushed: results });
-});
-
-// Test endpoint
-app.post('/api/test-signal', async (req, res) => {
-  const testSignal = {
-    id: Date.now(),
-    timestamp: new Date().toISOString(),
-    action: req.body.action || 'BUY',
-    symbol: req.body.symbol || 'BTC/USDT',
-    price: req.body.price || 65000,
-    tp: req.body.tp || 67000,
-    sl: req.body.sl || 63000,
-    timeframe: '1H',
-    confidence: 82,
-    strategy: 'Test'
-  };
-
-  db.signals.unshift(testSignal);
-  saveDB();
-
-  const results = await sendPushToAll(testSignal);
-  res.json({ success: true, signal: testSignal, pushed: results });
-});
-
-// Status strežnika
 app.get('/api/status', (req, res) => {
+  const closes = candles.map(c => c.close);
+  const rsi = calcRSI(closes, RSI_PERIOD);
   res.json({
     status: 'OK',
+    symbol: SYMBOL,
+    interval: INTERVAL,
+    currentPrice,
+    candles: candles.length,
+    rsi,
+    emaFast: prevEmaFast ? Math.round(prevEmaFast * 100) / 100 : null,
+    emaSlow: prevEmaSlow ? Math.round(prevEmaSlow * 100) / 100 : null,
     signals: db.signals.length,
     subscribers: db.subscriptions.length,
-    uptime: process.uptime(),
-    vapidConfigured: VAPID_PUBLIC !== 'ZAMENJAJ_S_TVOJIM_PUBLIC_KLUCEM'
+    strategy: `EMA${EMA_FAST}/${EMA_SLOW} + RSI${RSI_PERIOD}`
   });
 });
 
-// VAPID public key (za frontend)
 app.get('/api/vapid-key', (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC });
 });
 
 // ─── PUSH NOTIFIKACIJE ────────────────────────────────────
-
 async function sendPushToAll(signal) {
-  if (db.subscriptions.length === 0) {
-    return { sent: 0, total: 0, errors: [] };
-  }
+  if (!db.subscriptions.length) return { sent: 0 };
 
   const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
   const payload = JSON.stringify({
     title: `${emoji} ${signal.action} ${signal.symbol}`,
-    body: `Cena: $${signal.price.toLocaleString()} | TP: $${signal.tp.toLocaleString()} | SL: $${signal.sl.toLocaleString()}`,
+    body: `$${signal.price.toLocaleString()} | TP: $${signal.tp.toLocaleString()} | SL: $${signal.sl.toLocaleString()} | RSI: ${signal.rsi}`,
     ...signal
   });
 
   let sent = 0;
-  const errors = [];
-  const deadSubscriptions = [];
+  const dead = [];
 
-  for (const subscription of db.subscriptions) {
+  for (const sub of db.subscriptions) {
     try {
-      await webpush.sendNotification(subscription, payload);
+      await webpush.sendNotification(sub, payload);
       sent++;
     } catch(err) {
-      console.log('Push error:', err.statusCode, subscription.endpoint.slice(0, 50));
-      errors.push(err.message);
-
-      // Odstrani neveljavne subscriptions
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        deadSubscriptions.push(subscription.endpoint);
-      }
+      if (err.statusCode === 410 || err.statusCode === 404) dead.push(sub.endpoint);
     }
   }
 
-  // Počisti neveljavne
-  if (deadSubscriptions.length > 0) {
-    db.subscriptions = db.subscriptions.filter(
-      s => !deadSubscriptions.includes(s.endpoint)
-    );
+  if (dead.length) {
+    db.subscriptions = db.subscriptions.filter(s => !dead.includes(s.endpoint));
     saveDB();
-    console.log(`🗑️ Odstranjenih ${deadSubscriptions.length} neveljavnih subscriptions`);
   }
 
-  return { sent, total: db.subscriptions.length, errors };
-}
-
-function parseTextSignal(text) {
-  // Razčleni besedilni signal npr. "BUY BTC 65000 TP:67000 SL:63000"
-  const upper = text.toUpperCase();
-  return {
-    action: upper.includes('BUY') ? 'BUY' : 'SELL',
-    symbol: upper.match(/BTC|ETH|SOL|BNB|XRP|ADA|AVAX|DOT/)?.[0] || 'CRYPTO',
-    price: parseFloat(text.match(/\d+\.?\d*/)?.[0] || 0),
-    tp: parseFloat(text.match(/TP[:\s]*(\d+\.?\d*)/i)?.[1] || 0),
-    sl: parseFloat(text.match(/SL[:\s]*(\d+\.?\d*)/i)?.[1] || 0)
-  };
+  return { sent, total: db.subscriptions.length };
 }
 
 // ─── START ────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════╗
-║   Trading Signals Server             ║
-║   Port: ${PORT}                         ║
-║   Status: ✅ AKTIVNO                ║
-╚══════════════════════════════════════╝
-
-📡 Webhook URL: http://localhost:${PORT}/webhook
-📊 API Status:  http://localhost:${PORT}/api/status
-🧪 Test Signal: POST http://localhost:${PORT}/api/test-signal
-
-NASLEDNJI KORAKI:
-1. Generiraj VAPID ključe:
-   node -e "const wp=require('web-push'); const k=wp.generateVAPIDKeys(); console.log(JSON.stringify(k,null,2))"
-2. Nastavi env spremenljivke VAPID_PUBLIC in VAPID_PRIVATE
-3. Odpri aplikacijo v Safari in dodaj na začetni zaslon
-4. V TradingView nastavi webhook na: http://tvoj-server/webhook
+╔══════════════════════════════════════════╗
+║   Trading Signals — Binance Edition      ║
+║   Port:     ${PORT}                           ║
+║   Symbol:   ${SYMBOL.padEnd(10)}              ║
+║   Interval: ${INTERVAL.padEnd(10)}              ║
+║   Strategy: EMA${EMA_FAST}/${EMA_SLOW} + RSI${RSI_PERIOD}            ║
+╚══════════════════════════════════════════╝
   `);
 });
