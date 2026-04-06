@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Trading Signals" />
+  <meta name="theme-color" content="#0a0e1a" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>Trading Signals</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0e1a;
+      --card: #111827;
+      --border: #1f2937;
+      --accent: #10b981;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --text: #f1f5f9;
+      --muted: #64748b;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+      min-height: 100vh;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #0a0e1a 0%, #0d1b2a 100%);
+      padding: 56px 20px 20px;
+      padding-top: calc(56px + env(safe-area-inset-top));
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header-left h1 {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #10b981, #06d6a0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-left p {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.3); }
+    }
+
+    /* Stats Bar */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat {
+      background: var(--card);
+      padding: 14px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-value.green { color: var(--accent); }
+    .stat-value.red { color: var(--red); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    /* Notifications Banner */
+    #notify-banner {
+      background: linear-gradient(135deg, #1a2744, #1e3a5f);
+      border: 1px solid #2563eb44;
+      margin: 16px;
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #notify-banner .icon { font-size: 22px; }
+
+    #notify-banner .text { flex: 1; }
+    #notify-banner .text p { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+    #notify-banner .text strong { font-size: 14px; }
+
+    #notify-btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #notify-btn:active { opacity: 0.8; }
+    #notify-banner.hidden { display: none; }
+
+    /* Section */
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 16px 16px 8px;
+    }
+
+    /* Signal Card */
+    .signal-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      margin: 0 16px 12px;
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .signal-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+    }
+
+    .signal-card.buy::before { background: var(--accent); }
+    .signal-card.sell::before { background: var(--red); }
+
+    .signal-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .signal-pair {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .signal-badge {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .signal-badge.buy { background: #10b98122; color: var(--accent); border: 1px solid #10b98144; }
+    .signal-badge.sell { background: #ef444422; color: var(--red); border: 1px solid #ef444444; }
+
+    .signal-price {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .signal-details {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .detail-box {
+      background: #ffffff08;
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .detail-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 3px;
+    }
+
+    .detail-value {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .detail-value.green { color: var(--accent); }
+    .detail-value.red { color: var(--red); }
+
+    .signal-time {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 10px;
+      text-align: right;
+    }
+
+    /* Confidence Bar */
+    .confidence-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .confidence-label {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .confidence-bar {
+      flex: 1;
+      height: 4px;
+      background: #ffffff10;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .confidence-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #f59e0b, #10b981);
+    }
+
+    .confidence-pct {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 30px;
+      color: var(--muted);
+    }
+
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+    .empty-state p { font-size: 14px; line-height: 1.5; }
+
+    /* Webhook info */
+    .webhook-card {
+      background: #0f1e12;
+      border: 1px solid #10b98133;
+      border-radius: 12px;
+      margin: 0 16px 16px;
+      padding: 14px;
+    }
+
+    .webhook-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .webhook-url {
+      background: #00000044;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: 'SF Mono', monospace;
+      font-size: 12px;
+      color: #94a3b8;
+      word-break: break-all;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .copy-btn {
+      background: #10b98122;
+      border: 1px solid #10b98144;
+      color: var(--accent);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Tab Bar */
+    .tab-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0; right: 0;
+      background: #0a0e1acc;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .tab-item {
+      padding: 10px;
+      text-align: center;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.2s;
+    }
+
+    .tab-item.active { opacity: 1; }
+    .tab-item .tab-icon { font-size: 22px; }
+    .tab-item .tab-label { font-size: 10px; margin-top: 2px; color: var(--accent); }
+
+    .page { display: none; padding-bottom: 80px; }
+    .page.active { display: block; }
+
+    /* Settings */
+    .settings-section {
+      margin: 16px;
+    }
+
+    .settings-group {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .settings-item {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .settings-item:last-child { border-bottom: none; }
+
+    .settings-item label { font-size: 15px; }
+    .settings-item .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .toggle {
+      width: 48px; height: 28px;
+      background: var(--border);
+      border-radius: 14px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.3s;
+      border: none;
+    }
+
+    .toggle.on { background: var(--accent); }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 22px; height: 22px;
+      background: white;
+      border-radius: 50%;
+      top: 3px; left: 3px;
+      transition: transform 0.3s;
+    }
+
+    .toggle.on::after { transform: translateX(20px); }
+
+    .section-header {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 6px 4px;
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Page: Signals -->
+<div id="page-signals" class="page active">
+  <div class="header">
+    <div class="header-left">
+      <h1>📈 Trading Signals</h1>
+      <p id="last-update">Čakam na signale...</p>
+    </div>
+    <div class="status-dot" id="status-dot"></div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat">
+      <div class="stat-value green" id="stat-win">0</div>
+      <div class="stat-label">Win</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value red" id="stat-loss">0</div>
+      <div class="stat-label">Loss</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value yellow" id="stat-rate">–</div>
+      <div class="stat-label">Win Rate</div>
+    </div>
+  </div>
+
+  <div id="notify-banner">
+    <div class="icon">🔔</div>
+    <div class="text">
+      <strong>Vklopi notifikacije</strong>
+      <p>Da prejmeš signale na telefon</p>
+    </div>
+    <button id="notify-btn" onclick="requestNotifications()">Vklopi</button>
+  </div>
+
+  <div class="section-title">Webhook URL (za TradingView)</div>
+  <div class="webhook-card">
+    <div class="webhook-title">⚡ Prilepi ta URL v TradingView Alert</div>
+    <div class="webhook-url">
+      <span id="webhook-display">Nastavljeno v strežniku</span>
+      <button class="copy-btn" onclick="copyWebhook()">Kopiraj</button>
+    </div>
+  </div>
+
+  <div class="section-title">Zadnji signali</div>
+  <div id="signals-container">
+    <div class="empty-state">
+      <div class="icon">📡</div>
+      <h3>Čakam na prvi signal</h3>
+      <p>Ko nastavi TradingView alert z webhook URL-jem, se signali pojavijo tukaj.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Page: History -->
+<div id="page-history" class="page">
+  <div class="header">
+    <div class="header-left">
+      <h1>📊 Zgodovina</h1>
+      <p>Vsi pretekli signali</p>
+    </div>
+  </div>
+  <div id="history-container" style="padding: 16px 0; padding-bottom: 80px;">
+    <div class="empty-state">
+      <div class="icon">📋</div>
+      <h3>Še ni zgodovine</h3>
+      <p>Signali se bodo shranjevali tukaj.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Page: Settings -->
+<div id="page-settings" class="page">
+  <div class="header">
+    <div class="header-left">
+      <h1>⚙️ Nastavitve</h1>
+      <p>Konfiguracija aplikacije</p>
+    </div>
+  </div>
+  <div class="settings-section">
+    <div class="section-header">Notifikacije</div>
+    <div class="settings-group">
+      <div class="settings-item">
+        <div>
+          <label>Push notifikacije</label>
+          <div class="hint">Signali na zaklenjeni zaslon</div>
+        </div>
+        <button class="toggle" id="toggle-notify" onclick="toggleNotify(this)"></button>
+      </div>
+      <div class="settings-item">
+        <div>
+          <label>Zvok</label>
+          <div class="hint">Zvočni opozoril ob signalu</div>
+        </div>
+        <button class="toggle on" id="toggle-sound" onclick="toggleNotify(this)"></button>
+      </div>
+    </div>
+
+    <div class="section-header">Strežnik</div>
+    <div class="settings-group">
+      <div class="settings-item">
+        <div>
+          <label>Strežnik URL</label>
+          <div class="hint" id="server-url-display">Nastavi v server.js</div>
+        </div>
+      </div>
+      <div class="settings-item" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+        <label>Webhook URL</label>
+        <div class="webhook-url" style="width:100%">
+          <span id="webhook-settings-display">Nastavljeno v strežniku</span>
+          <button class="copy-btn" onclick="copyWebhook()">Kopiraj</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">Aplikacija</div>
+    <div class="settings-group">
+      <div class="settings-item">
+        <div>
+          <label>Izbriši zgodovino</label>
+          <div class="hint">Počisti vse shranjene signale</div>
+        </div>
+        <button class="copy-btn" style="background:#ef444422;border-color:#ef444444;color:#ef4444" onclick="clearHistory()">Izbriši</button>
+      </div>
+    </div>
+
+    <div style="text-align:center; color: var(--muted); font-size: 12px; padding: 20px;">
+      Trading Signals PWA v1.0<br>
+      Narejeno za iPhone 📱
+    </div>
+  </div>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar">
+  <div class="tab-item active" onclick="switchTab('signals', this)">
+    <div class="tab-icon">📡</div>
+    <div class="tab-label">Signali</div>
+  </div>
+  <div class="tab-item" onclick="switchTab('history', this)">
+    <div class="tab-icon">📊</div>
+    <div class="tab-label">Zgodovina</div>
+  </div>
+  <div class="tab-item" onclick="switchTab('settings', this)">
+    <div class="tab-icon">⚙️</div>
+    <div class="tab-label">Nastavitve</div>
+  </div>
+</div>
+
+<script>
+  // ─── CONFIG ───────────────────────────────────────────
+  // NASTAVI ta URL ko deplojaš strežnik (npr. https://tvoj-app.railway.app)
+  const SERVER_URL = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+  // ──────────────────────────────────────────────────────
+
+  let signals = JSON.parse(localStorage.getItem('signals') || '[]');
+  let stats = JSON.parse(localStorage.getItem('stats') || '{"win":0,"loss":0}');
+  let swRegistration = null;
+
+  // Init
+  document.addEventListener('DOMContentLoaded', async () => {
+    updateWebhookDisplay();
+    renderSignals();
+    updateStats();
+    await registerServiceWorker();
+    checkNotificationStatus();
+    pollForSignals();
+  });
+
+  async function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      try {
+        swRegistration = await navigator.serviceWorker.register('sw.js');
+        console.log('SW registered');
+      } catch(e) {
+        console.log('SW error:', e);
+      }
+    }
+  }
+
+  function checkNotificationStatus() {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      document.getElementById('notify-banner').classList.add('hidden');
+      document.getElementById('toggle-notify').classList.add('on');
+    }
+  }
+
+  async function requestNotifications() {
+    if (!('Notification' in window)) {
+      alert('Tvoj brskalnik ne podpira notifikacij.\nDodaj aplikacijo na začetni zaslon v Safari in poskusi znova.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      document.getElementById('notify-banner').classList.add('hidden');
+      document.getElementById('toggle-notify').classList.add('on');
+      showLocalNotification('✅ Notifikacije vklopljene!', 'Zdaj boš prejemal trading signale.');
+    }
+  }
+
+  function showLocalNotification(title, body) {
+    if (Notification.permission === 'granted') {
+      if (swRegistration) {
+        swRegistration.showNotification(title, {
+          body,
+          icon: 'icon-192.png',
+          badge: 'icon-192.png',
+          vibrate: [200, 100, 200],
+          tag: 'trading-signal'
+        });
+      } else {
+        new Notification(title, { body, icon: 'icon-192.png' });
+      }
+    }
+  }
+
+  // Poll strežnik za nove signale
+  let lastSignalId = signals.length > 0 ? signals[0].id : 0;
+
+  async function pollForSignals() {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/signals?since=${lastSignalId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.signals && data.signals.length > 0) {
+          data.signals.forEach(sig => {
+            addSignal(sig);
+          });
+        }
+      }
+    } catch(e) {
+      // Strežnik ni dostopen
+    }
+    setTimeout(pollForSignals, 5000); // Preveri vsakih 5 sekund
+  }
+
+  function addSignal(sig) {
+    // Preveri duplikat
+    if (signals.find(s => s.id === sig.id)) return;
+
+    signals.unshift(sig);
+    if (signals.length > 100) signals.pop();
+    lastSignalId = sig.id;
+
+    localStorage.setItem('signals', JSON.stringify(signals));
+    renderSignals();
+
+    // Notifikacija
+    const emoji = sig.action === 'BUY' ? '🟢' : '🔴';
+    showLocalNotification(
+      `${emoji} ${sig.action} ${sig.symbol}`,
+      `Cena: $${sig.price} | TP: $${sig.tp} | SL: $${sig.sl}`
+    );
+
+    document.getElementById('last-update').textContent = 'Zadnji signal: ' + formatTime(new Date());
+  }
+
+  function renderSignals() {
+    const container = document.getElementById('signals-container');
+    const histContainer = document.getElementById('history-container');
+
+    if (signals.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">📡</div>
+          <h3>Čakam na prvi signal</h3>
+          <p>Ko nastavi TradingView alert z webhook URL-jem, se signali pojavijo tukaj.</p>
+        </div>`;
+      histContainer.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">📋</div>
+          <h3>Še ni zgodovine</h3>
+          <p>Signali se bodo shranjevali tukaj.</p>
+        </div>`;
+      return;
+    }
+
+    // Prikaži zadnjih 10 na glavni strani
+    const recent = signals.slice(0, 10);
+    container.innerHTML = recent.map(renderCard).join('');
+    histContainer.innerHTML = signals.map(renderCard).join('') + '<div style="height:16px"></div>';
+  }
+
+  function renderCard(sig) {
+    const isBuy = sig.action === 'BUY';
+    const conf = sig.confidence || 78;
+    return `
+    <div class="signal-card ${isBuy ? 'buy' : 'sell'}">
+      <div class="signal-top">
+        <span class="signal-pair">${sig.symbol || 'BTC/USDT'}</span>
+        <span class="signal-badge ${isBuy ? 'buy' : 'sell'}">${sig.action}</span>
+      </div>
+      <div class="signal-price">$${parseFloat(sig.price || 0).toLocaleString()}</div>
+      <div class="signal-details">
+        <div class="detail-box">
+          <div class="detail-label">Take Profit</div>
+          <div class="detail-value green">$${parseFloat(sig.tp || 0).toLocaleString()}</div>
+        </div>
+        <div class="detail-box">
+          <div class="detail-label">Stop Loss</div>
+          <div class="detail-value red">$${parseFloat(sig.sl || 0).toLocaleString()}</div>
+        </div>
+        <div class="detail-box">
+          <div class="detail-label">Timeframe</div>
+          <div class="detail-value">${sig.timeframe || '1H'}</div>
+        </div>
+      </div>
+      <div class="confidence-row">
+        <span class="confidence-label">Zaupanje</span>
+        <div class="confidence-bar">
+          <div class="confidence-fill" style="width:${conf}%"></div>
+        </div>
+        <span class="confidence-pct">${conf}%</span>
+      </div>
+      <div class="signal-time">${formatTime(new Date(sig.timestamp || Date.now()))}</div>
+    </div>`;
+  }
+
+  function updateStats() {
+    document.getElementById('stat-win').textContent = stats.win;
+    document.getElementById('stat-loss').textContent = stats.loss;
+    const total = stats.win + stats.loss;
+    document.getElementById('stat-rate').textContent = total > 0
+      ? Math.round((stats.win / total) * 100) + '%' : '–';
+  }
+
+  function updateWebhookDisplay() {
+    const url = `${SERVER_URL}/webhook`;
+    document.getElementById('webhook-display').textContent = url;
+    document.getElementById('webhook-settings-display').textContent = url;
+    document.getElementById('server-url-display').textContent = SERVER_URL;
+  }
+
+  function copyWebhook() {
+    const url = `${SERVER_URL}/webhook`;
+    navigator.clipboard.writeText(url).then(() => {
+      alert('✅ Webhook URL kopiran!\nPrilepi ga v TradingView Alert → Notifications → Webhook URL');
+    }).catch(() => {
+      prompt('Kopiraj ta URL:', url);
+    });
+  }
+
+  function switchTab(tab, el) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+    document.getElementById('page-' + tab).classList.add('active');
+    el.classList.add('active');
+  }
+
+  function toggleNotify(btn) {
+    btn.classList.toggle('on');
+    if (btn.id === 'toggle-notify' && btn.classList.contains('on')) {
+      requestNotifications();
+    }
+  }
+
+  function clearHistory() {
+    if (confirm('Res želiš izbrisati vso zgodovino signalov?')) {
+      signals = [];
+      stats = { win: 0, loss: 0 };
+      localStorage.setItem('signals', '[]');
+      localStorage.setItem('stats', JSON.stringify(stats));
+      renderSignals();
+      updateStats();
+    }
+  }
+
+  function formatTime(date) {
+    return date.toLocaleString('sl-SI', {
+      day: '2-digit', month: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+</script>
+</body>
+</html>
