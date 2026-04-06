@@ -568,8 +568,8 @@
 
 <script>
   // ─── CONFIG ───────────────────────────────────────────
-  // NASTAVI ta URL ko deplojaš strežnik (npr. https://tvoj-app.railway.app)
-  const SERVER_URL = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+  // Avtomatsko vzame URL kjer teče aplikacija (deluje lokalno in na Railway)
+  const SERVER_URL = localStorage.getItem('serverUrl') || window.location.origin;
   // ──────────────────────────────────────────────────────
 
   let signals = JSON.parse(localStorage.getItem('signals') || '[]');
